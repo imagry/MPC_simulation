@@ -6,9 +6,9 @@ import Functions
 from Functions import fold_angles, epsilon_limit
 from os.path import join
 import pandas as pd
+import cvxpy
 import CurvesGenerator.cubic_spline as cs
 class VehicleKinemaicModel:
-    
     def __init__(self,
                  vehicle_params:dict, simulation_params:dict,
                  x=0.0, y=0.0, psi=0.0, vx=0.0,
@@ -324,6 +324,284 @@ class StanleyController:
         self.calc_theta_e_and_ef(vehicle_state)
         self.delta = self.psi_e + math.atan2(self.Ks * self.ef, vehicle_state[3] + self.eps)
 
+class MPC_params:
+    # System config
+    NX = 4  # state vector: z = [x, y, v, phi]
+    NU = 2  # input vector: u = [acceleration, steer]
+    T = 6  # finite time horizon length
+
+    # MPC config
+    Q = np.diag([1.0, 1.0, 1.0, 1.0])  # penalty for states
+    Qf = np.diag([1.0, 1.0, 1.0, 1.0])  # penalty for end state
+    R = np.diag([0.001, 0.001])  # penalty for inputs
+    Rd = np.diag([0.01, 0.1])  # penalty for change of inputs
+
+    dist_stop = 1.5  # stop permitted when dist to goal < dist_stop
+    speed_stop = 0.5 / 3.6  # stop permitted when speed < speed_stop
+    time_max = 500.0  # max simulation time
+    iter_max = 5  # max iteration
+    target_speed = 10.0 / 3.6  # target speed
+    N_IND = 10  # search index number
+    dt = 0.2  # time step
+    d_dist = 1.0  # dist step
+    du_res = 0.1  # threshold for stopping iteration
+
+    # vehicle config
+    RF = 3.3  # [m] distance from rear to vehicle front end of vehicle
+    RB = 0.8  # [m] distance from rear to vehicle back end of vehicle
+    W = 1.8  # [m] width of vehicle
+    WD = 1.5  # [m] distance between left-right wheels
+    WB = 2.7  # [m] Wheel base
+    TR = 0.44  # [m] Tyre radius
+    TW = 0.7  # [m] Tyre width
+
+    steer_max = np.deg2rad(45.0)  # max steering angle [rad]
+    steer_change_max = np.deg2rad(300.0)  # maximum steering speed [rad/s]
+    speed_max = 55.0 / 3.6  # maximum speed [m/s]
+    speed_min = -20.0 / 3.6  # minimum speed [m/s]
+    acceleration_max = 10.0  # maximum acceleration [m/s2]
+
+class MPC:
+    def __init__(self, vehicle_params, simulation_params, ref_path_points, ref_path_heading, speed_profile):
+        self.car_model = VehicleKinemaicModel(vehicle_params=vehicle_params, simulation_params=simulation_params,
+                                       steering_uncertainty_factor=1.0, lr_uncertainty_factor=1.0, WB_uncertainty_factor=1.0)
+        self.MPC_params = MPC_params
+        self.MPC_params.WB = vehicle_params['WB']
+        self.MPC_params.steer_max = vehicle_params['MAX_STEER']# in radians
+        self.MPC_params.d_dist = simulation_params["path_spacing"]
+        self.ref_path_points = ref_path_points
+        self.ref_path_heading = ref_path_heading
+        self.ref_path_heading = ref_path_heading
+        self.speed_profile = speed_profile
+        self.delta_old = [0.0] * self.MPC_params.T
+        self.a_old = [0.0] * self.MPC_params.T
+        self.delta_opt = None
+        self.a_opt = None
+        self.x_opt = None
+        self.y_opt = None
+        self.yaw_opt = None
+        self.v_opt = None
+        self.delta_exc = None
+        self.a_exc = None
+        self.actuation_cost = 0.0
+        self.actuation_diff_cost = 0.0
+        self.output_cost = 0.0
+        self.overall_cost = 0.0
+    def calc_steering_command(self, vehicle_obj):
+        z_ref, target_ind = self.calc_ref_trajectory_in_T_step(vehicle_obj)
+        z0 = [vehicle_obj.x, vehicle_obj.y, vehicle_obj.vx, vehicle_obj.psi]
+        self.linear_mpc_control(z_ref, z0)
+        if self.delta_opt is not None:
+            self.delta_exc, self.a_exc = self.delta_opt[0], self.a_opt[0]
+
+    def linear_mpc_control(self, z_ref, z0):
+        """
+        linear mpc controller
+        :param z_ref: reference trajectory in T steps
+        :param z0: initial state vector
+        :param a_old: acceleration of T steps of last time
+        :param delta_old: delta of T steps of last time
+        :return: acceleration and delta strategy based on current information
+        """
+
+        x, y, yaw, v = None, None, None, None
+
+        for k in range(self.MPC_params.iter_max):
+            z_bar = self.predict_states_in_T_step(z0, z_ref)
+            a_rec, delta_rec = self.a_old[:], self.delta_old[:]
+            self.a_old, self.delta_old, x, y, yaw, v = self.solve_linear_mpc(z_ref, z_bar, z0, self.delta_old)
+
+            du_a_max = max([abs(ia - iao) for ia, iao in zip(self.a_old, a_rec)])
+            du_d_max = max([abs(ide - ido) for ide, ido in zip(self.delta_old, delta_rec)])
+
+            if max(du_a_max, du_d_max) < self.MPC_params.du_res:
+                break
+        self.a_opt = self.a_old
+        self.delta_opt = self.delta_old
+        self.x_opt = x
+        self.y_opt = y
+        self.yaw_opt = yaw
+        self.v_opt = v
+    def calc_ref_trajectory_in_T_step(self, car_model):
+        """
+        calc referent trajectory in T steps: [x, y, v, yaw]
+        using the current velocity, calc the T points along the reference path
+        :param car_model: current information
+        :param ref_path: reference path: [x, y, yaw]
+        :param sp: speed profile (designed speed strategy)
+        :return: reference trajectory
+        """
+
+        z_ref = np.zeros((self.MPC_params.NX, self.MPC_params.T + 1))
+        length = len(self.ref_path_heading)
+
+        ind = Functions.project_point_on_path([car_model.x, car_model.y], self.ref_path_points,
+                                              exclude_points_behind_vehicle=True, psi=car_model.psi)
+        # ind, _ = ref_path.nearest_index(node)
+
+        z_ref[0, 0] = self.ref_path_points[ind, 0]
+        z_ref[1, 0] = self.ref_path_points[ind, 1]
+        z_ref[2, 0] = self.speed_profile[ind]
+        z_ref[3, 0] = self.ref_path_heading[ind]
+
+        dist_move = 0.0
+
+        for i in range(1, self.MPC_params.T + 1):
+            dist_move += abs(car_model.vx) * self.MPC_params.dt
+            # the dt is for the MPC prediction not the simulation therefore can differ.
+            ind_move = int(round(dist_move / self.MPC_params.d_dist))
+            index = min(ind + ind_move, length - 1)
+
+            z_ref[0, i] = self.ref_path_points[index, 0]
+            z_ref[1, i] = self.ref_path_points[index, 1]
+            z_ref[2, i] = self.speed_profile[index]
+            z_ref[3, i] = self.ref_path_heading[index]
+
+        return z_ref, ind
+    def predict_states_in_T_step(self, z0, z_ref):
+        """
+        given the current state, using the acceleration and delta strategy of last time,
+        predict the states of vehicle in T steps.
+        :param z0: initial state
+        :param a: acceleration strategy of last time
+        :param delta: delta strategy of last time
+        :param z_ref: reference trajectory
+        :return: predict states in T steps (z_bar, used for calc linear motion model)
+        """
+
+        z_bar = z_ref * 0.0
+
+        for i in range(self.MPC_params.NX):
+            z_bar[i, 0] = z0[i]
+
+        self.car_model.x=z0[0]
+        self.car_model.y=z0[1]
+        self.car_model.vx=z0[2]
+        self.car_model.psi=z0[3]
+        # node = Node(x=z0[0], y=z0[1], v=z0[2], yaw=z0[3])
+
+        for ai, di, i in zip(self.a_old, self.delta_old, range(1, self.MPC_params.T + 1)):
+            self.car_model.update(ai, di)
+            z_bar[0, i] = self.car_model.x
+            z_bar[1, i] = self.car_model.y
+            z_bar[2, i] = self.car_model.vx
+            z_bar[3, i] = self.car_model.psi
+
+        return z_bar
+    def solve_linear_mpc(self, z_ref, z_bar, z0, d_bar):
+        """
+        solve the quadratic optimization problem using cvxpy, solver: OSQP
+        :param z_ref: reference trajectory (desired trajectory: [x, y, v, yaw])
+        :param z_bar: predicted states in T steps
+        :param z0: initial state
+        :param d_bar: delta_bar
+        :return: optimal acceleration and steering strategy
+        """
+        z = cvxpy.Variable((self.MPC_params.NX, self.MPC_params.T + 1))
+        u = cvxpy.Variable((self.MPC_params.NU, self.MPC_params.T))
+
+        overall_cost = 0.0
+        actuation_cost = 0.0
+        actuation_diff_cost = 0.0
+        output_cost = 0.0
+        final_state_cost = 0.0
+        cost = 0.0
+        constrains = []
+
+        for t in range(self.MPC_params.T):
+            actuation_cost += cvxpy.quad_form(u[:, t], self.MPC_params.R)
+            output_cost += cvxpy.quad_form(z_ref[:, t] - z[:, t], self.MPC_params.Q)
+
+            A, B, C = self.calc_linear_discrete_model(z_bar[2, t], z_bar[3, t], d_bar[t])
+
+            constrains += [z[:, t + 1] == A @ z[:, t] + B @ u[:, t] + C]
+
+            if t < self.MPC_params.T - 1:
+                actuation_diff_cost += cvxpy.quad_form(u[:, t + 1] - u[:, t], self.MPC_params.Rd)
+                constrains += [
+                    cvxpy.abs(u[1, t + 1] - u[1, t]) <= self.MPC_params.steer_change_max * self.MPC_params.dt]
+
+        final_state_cost += cvxpy.quad_form(z_ref[:, self.MPC_params.T] - z[:, self.MPC_params.T], self.MPC_params.Qf)
+        overall_cost = output_cost + actuation_cost + actuation_diff_cost + final_state_cost
+        constrains += [z[:, 0] == z0]
+        constrains += [z[2, :] <= self.MPC_params.speed_max]
+        constrains += [z[2, :] >= self.MPC_params.speed_min]
+        constrains += [cvxpy.abs(u[0, :]) <= self.MPC_params.acceleration_max]
+        constrains += [cvxpy.abs(u[1, :]) <= self.MPC_params.steer_max]
+
+        prob = cvxpy.Problem(cvxpy.Minimize(overall_cost), constrains)
+        prob.solve(solver=cvxpy.OSQP)
+        # z = cvxpy.Variable((self.MPC_params.NX, self.MPC_params.T + 1))
+        # u = cvxpy.Variable((self.MPC_params.NU, self.MPC_params.T))
+        #
+        # overall_cost = 0.0
+        # actuation_cost = 0.0
+        # actuation_diff_cost = 0.0
+        # output_cost = 0.0
+        # cost = 0.0
+        # constrains = []
+        #
+        # for t in range(self.MPC_params.T):
+        #     cost += cvxpy.quad_form(u[:, t], self.MPC_params.R)
+        #     cost += cvxpy.quad_form(z_ref[:, t] - z[:, t], self.MPC_params.Q)
+        #
+        #     A, B, C = self.calc_linear_discrete_model(z_bar[2, t], z_bar[3, t], d_bar[t])
+        #
+        #     constrains += [z[:, t + 1] == A @ z[:, t] + B @ u[:, t] + C]
+        #
+        #     if t < self.MPC_params.T - 1:
+        #         cost += cvxpy.quad_form(u[:, t + 1] - u[:, t], self.MPC_params.Rd)
+        #         constrains += [cvxpy.abs(u[1, t + 1] - u[1, t]) <= self.MPC_params.steer_change_max * self.MPC_params.dt]
+        #
+        # cost += cvxpy.quad_form(z_ref[:, self.MPC_params.T] - z[:, self.MPC_params.T], self.MPC_params.Qf)
+        # constrains += [z[:, 0] == z0]
+        # constrains += [z[2, :] <= self.MPC_params.speed_max]
+        # constrains += [z[2, :] >= self.MPC_params.speed_min]
+        # constrains += [cvxpy.abs(u[0, :]) <= self.MPC_params.acceleration_max]
+        # constrains += [cvxpy.abs(u[1, :]) <= self.MPC_params.steer_max]
+        #
+        # prob = cvxpy.Problem(cvxpy.Minimize(cost), constrains)
+        # prob.solve(solver=cvxpy.OSQP)
+
+        a, delta, x, y, yaw, v = None, None, None, None, None, None
+
+        if prob.status == cvxpy.OPTIMAL or \
+                prob.status == cvxpy.OPTIMAL_INACCURATE:
+            x = z.value[0, :]
+            y = z.value[1, :]
+            v = z.value[2, :]
+            yaw = z.value[3, :]
+            a = u.value[0, :]
+            delta = u.value[1, :]
+        else:
+            print("Cannot solve linear mpc!")
+
+        return a, delta, x, y, yaw, v
+    def calc_linear_discrete_model(self, v, phi, delta):
+        """
+        calc linear and discrete time dynamic model.
+        :param v: speed: v_bar
+        :param phi: angle of vehicle: phi_bar
+        :param delta: steering angle: delta_bar
+        :return: A, B, C
+        """
+
+        A = np.array([[1.0, 0.0, self.MPC_params.dt * math.cos(phi), - self.MPC_params.dt * v * math.sin(phi)],
+                      [0.0, 1.0, self.MPC_params.dt * math.sin(phi), self.MPC_params.dt * v * math.cos(phi)],
+                      [0.0, 0.0, 1.0, 0.0],
+                      [0.0, 0.0, self.MPC_params.dt * math.tan(delta) / self.MPC_params.WB, 1.0]])
+
+        B = np.array([[0.0, 0.0],
+                      [0.0, 0.0],
+                      [self.MPC_params.dt, 0.0],
+                      [0.0, self.MPC_params.dt * v / (self.MPC_params.WB * math.cos(delta) ** 2)]])
+
+        C = np.array([self.MPC_params.dt * v * math.sin(phi) * phi,
+                      -self.MPC_params.dt * v * math.cos(phi) * phi,
+                      0.0,
+                      -self.MPC_params.dt * v * delta / (self.MPC_params.WB * math.cos(delta) ** 2)])
+
+        return A, B, C
 
 class RearWheelFeedbackController:
 
