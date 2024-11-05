@@ -12,14 +12,14 @@ from tqdm import tqdm
 
 with open('vehicle_config.json', "r") as f:
     vehicle_params = json.loads(f.read())
-simulation_params = {'dt': 0.01, 't_end': 50, 'ego_frame_placement': 'front_axle', 'velocity_KPH': 10,
-                     'path_spacing': 0.1,
+simulation_params = {'dt': 0.2, 't_end': 50, 'ego_frame_placement': 'front_axle', 'velocity_KPH': 10,
+                     'path_spacing': 1.0,
                      'model': 'Kinematic', #'Kinematic', 'Dynamic'
                      'animate': True, 'plot_results': True, 'save_results': False}
 # generate path
 traj_samples_x = np.arange(0, 50, 0.5)
-scenario = 'random_curvature' # 'sin', 'straight_line', 'square', shiba, random_curvature
-traj_spline_x, traj_spline_y, traj_spline_psi, _, s = Functions.calc_desired_path(scenario)
+scenario = 'original_from_repo' # 'sin', 'straight_line', 'square', shiba, random_curvature,turn, original_from_repo
+traj_spline_x, traj_spline_y, traj_spline_psi, _, s = Functions.calc_desired_path(scenario, ds=simulation_params['path_spacing'])
 traj_length = s[-1]
 # create vehicle agent
 error_x = 0.0
@@ -30,7 +30,8 @@ if simulation_params['model'] == 'Dynamic':
                                       steering_uncertainty_factor=1.0, lr_uncertainty_factor=1.0, WB_uncertainty_factor=1.0,
                                       m_uncertainty_factor=1.0, I_uncertainty_factor=1.0, C_uncertainty_factor=1.0)
 elif simulation_params['model'] == 'Kinematic':
-    vehicle_obj = VehicleKinemaicModel(vehicle_params=vehicle_params, simulation_params=simulation_params,
+    vehicle_obj = VehicleKinemaicModel(x=traj_spline_x[0] + error_x, y=traj_spline_y[0] + error_y, psi=traj_spline_psi[0],
+                                       vehicle_params=vehicle_params, simulation_params=simulation_params,
                                        steering_uncertainty_factor=1.0, lr_uncertainty_factor=1.0, WB_uncertainty_factor=1.0)
 t = np.arange(0, simulation_params['t_end'], simulation_params['dt'])
 vehicle_obj.vx = simulation_params['velocity_KPH'] / 3.6
@@ -47,6 +48,11 @@ velocity = []
 ef = []
 psi_traj = []
 t_acumulated = []
+actuation_cost = []
+actuation_diff_cost = []
+output_cost = []
+final_state_cost = []
+overall_cost = []
 # stanly gain
 Ks = 1.0
 SC = StanleyController(Ks=Ks, desired_traj_x=traj_spline_x, desired_traj_y=traj_spline_y, desired_traj_psi=traj_spline_psi)
@@ -69,12 +75,15 @@ if simulation_params['animate']:
     vehicle_animation_axis.grid(True)
     vehicle_animation_axis.set_xlabel('x [m]')
     vehicle_animation_axis.set_ylabel('y [m]')
-    lateral_error_axis = plt.subplot(2, 2, 2)
+    lateral_error_axis = plt.subplot(3, 2, 2)
     lateral_error_axis.grid(True)
     lateral_error_axis.set_ylabel('lateral error [m]')
-    velocity_axis = plt.subplot(2, 2, 4)
+    velocity_axis = plt.subplot(3, 2, 4)
     velocity_axis.grid(True)
     velocity_axis.set_ylabel('velocity [m/sec]')
+    MPC_cost_axis = plt.subplot(3, 2, 6)
+    MPC_cost_axis.grid(True)
+    MPC_cost_axis.set_ylabel('MPC cost [unitless]')
 
 animation_dt = 0.1
 ndt = int(animation_dt/simulation_params['dt'])
@@ -96,6 +105,11 @@ while not stop_condition:
     delta.append(MPC_obj.delta_exc)
     ef.append(SC.ef)
     velocity.append(vehicle_obj.vx)
+    actuation_cost.append(MPC_obj.actuation_cost)
+    actuation_diff_cost.append(MPC_obj.actuation_diff_cost)
+    output_cost.append(MPC_obj.output_cost)
+    final_state_cost.append(MPC_obj.final_state_cost)
+    overall_cost.append(MPC_obj.overall_cost)
     # psi_traj.append(psi_traj_i)
     cond1 = i >= t.shape[0] - 1
     cond2 = np.linalg.norm(np.array([vehicle_obj.x - traj_spline_x[-1], vehicle_obj.y - traj_spline_y[-1]])) < 1.0
@@ -124,12 +138,20 @@ while not stop_condition:
         velocity_axis.clear()
         velocity_axis.plot(t_acumulated, velocity)
         velocity_axis.grid(True)
+        MPC_cost_axis.plot(t_acumulated, output_cost, label='output_cost')
+        MPC_cost_axis.plot(t_acumulated, actuation_cost, label='actuation_cost')
+        MPC_cost_axis.plot(t_acumulated, actuation_diff_cost, label='actuation_diff_cost')
+        MPC_cost_axis.plot(t_acumulated, final_state_cost, label='final_state_cost')
+        MPC_cost_axis.plot(t_acumulated, overall_cost, label='overall_cost')
+        MPC_cost_axis.legend(loc='upper left')
+        MPC_cost_axis.grid(True)
         vehicle_animation_axis.set_xlabel('x [m]')
         vehicle_animation_axis.set_ylabel('y [m]')
         lateral_error_axis.set_xlabel('t [sec]')
         lateral_error_axis.set_ylabel('lateral error [m]')
         velocity_axis.set_ylabel('velocity [m/sec]')
         velocity_axis.set_xlabel('t [sec]')
+        MPC_cost_axis.set_ylabel('MPC cost [unitless]')
         plt.gcf().canvas.mpl_connect('key_release_event',
                                      lambda event:
                                      [exit(0) if event.key == 'escape' else None])

@@ -43,9 +43,12 @@ class VehicleKinemaicModel:
             # self.y += self.v * math.sin(self.psi) * self.simulation_params['dt']
             # self.psi += self.v / self.WB * math.tan(delta) * self.simulation_params['dt']
             delta = self.limit_input(delta)
-            self.x += self.vx * np.cos(self.psi + delta) * self.simulation_params['dt']
-            self.y += self.vx * np.sin(self.psi + delta) * self.simulation_params['dt']
-            self.psi += self.vx * np.sin(delta) / self.WB * self.simulation_params['dt']
+            # self.x += self.vx * np.cos(self.psi + delta) * self.simulation_params['dt']
+            # self.y += self.vx * np.sin(self.psi + delta) * self.simulation_params['dt']
+            # self.psi += self.vx * np.sin(delta) / self.WB * self.simulation_params['dt']
+            self.x += self.vx * np.cos(self.psi) * self.simulation_params['dt']
+            self.y += self.vx * np.sin(self.psi) * self.simulation_params['dt']
+            self.psi += self.vx / self.WB * np.tan(delta) * self.simulation_params['dt']
         elif self.simulation_params['ego_frame_placement'] == 'rear_axle':
             delta = self.limit_input(delta)
             self.x += self.vx * np.cos(self.psi) * self.simulation_params['dt']
@@ -333,7 +336,7 @@ class MPC_params:
     # MPC config
     Q = np.diag([1.0, 1.0, 1.0, 1.0])  # penalty for states
     Qf = np.diag([1.0, 1.0, 1.0, 1.0])  # penalty for end state
-    R = np.diag([0.001, 0.001])  # penalty for inputs
+    R = np.diag([0.01, 0.1])  # penalty for inputs
     Rd = np.diag([0.01, 0.1])  # penalty for change of inputs
 
     dist_stop = 1.5  # stop permitted when dist to goal < dist_stop
@@ -386,14 +389,18 @@ class MPC:
         self.actuation_cost = 0.0
         self.actuation_diff_cost = 0.0
         self.output_cost = 0.0
+        self.final_state_cost = 0.0
         self.overall_cost = 0.0
     def calc_steering_command(self, vehicle_obj):
-        z_ref, target_ind = self.calc_ref_trajectory_in_T_step(vehicle_obj)
+        self.car_model.x = vehicle_obj.x
+        self.car_model.y = vehicle_obj.y
+        self.car_model.vx = vehicle_obj.vx
+        self.car_model.psi = vehicle_obj.psi
+        z_ref, target_ind = self.calc_ref_trajectory_in_T_step(self.car_model)
         z0 = [vehicle_obj.x, vehicle_obj.y, vehicle_obj.vx, vehicle_obj.psi]
         self.linear_mpc_control(z_ref, z0)
         if self.delta_opt is not None:
             self.delta_exc, self.a_exc = self.delta_opt[0], self.a_opt[0]
-
     def linear_mpc_control(self, z_ref, z0):
         """
         linear mpc controller
@@ -500,12 +507,10 @@ class MPC:
         z = cvxpy.Variable((self.MPC_params.NX, self.MPC_params.T + 1))
         u = cvxpy.Variable((self.MPC_params.NU, self.MPC_params.T))
 
-        overall_cost = 0.0
         actuation_cost = 0.0
         actuation_diff_cost = 0.0
         output_cost = 0.0
         final_state_cost = 0.0
-        cost = 0.0
         constrains = []
 
         for t in range(self.MPC_params.T):
@@ -531,6 +536,11 @@ class MPC:
 
         prob = cvxpy.Problem(cvxpy.Minimize(overall_cost), constrains)
         prob.solve(solver=cvxpy.OSQP)
+        self.actuation_cost = actuation_cost.value
+        self.actuation_diff_cost = actuation_diff_cost.value
+        self.output_cost = output_cost.value
+        self.final_state_cost = final_state_cost.value
+        self.overall_cost = overall_cost.value
         # z = cvxpy.Variable((self.MPC_params.NX, self.MPC_params.T + 1))
         # u = cvxpy.Variable((self.MPC_params.NU, self.MPC_params.T))
         #
