@@ -71,7 +71,7 @@ class VehicleKinemaicModel:
 
         return delta
     def clone(self):
-        return copy.copy(self)
+        return copy.deepcopy(self)
 
 
 class VehicleDynamicModel:
@@ -348,9 +348,10 @@ class MPC_params:
     iter_max = 5  # max iteration
     target_speed = 10.0 / 3.6  # target speed
     N_IND = 10  # search index number
-    dt = 0.2  # time step
+    dt = 0.1  # time step
     d_dist = 1.0  # dist step
-    du_res = 0.1  # threshold for stopping iteration
+    d_a_res = 0.001  # threshold for stopping iteration
+    d_delta_res = 0.001  # threshold for stopping iteration
 
     # vehicle config
     RF = 3.3  # [m] distance from rear to vehicle front end of vehicle
@@ -496,8 +497,10 @@ class MPC:
 
             du_a_max = max([abs(ia - iao) for ia, iao in zip(self.a_old, a_rec)])
             du_d_max = max([abs(ide - ido) for ide, ido in zip(self.delta_old, delta_rec)])
-
-            if max(du_a_max, du_d_max) < self.MPC_params.du_res:
+            if False:
+                print("MPC iteration = " + str(k) + ", du_a_max = " + str(du_a_max) + ", du_d_max = " + str(du_d_max) +
+                      ", cost = " + str(self.cost_dict["overall_cost"]))
+            if du_a_max < self.MPC_params.d_a_res and du_d_max < self.MPC_params.d_delta_res:
                 break
         self.a_opt = self.a_old
         self.delta_opt = self.delta_old
@@ -564,8 +567,7 @@ class MPC:
                                          x=z0[0], y=z0[1], vx=z0[2], psi=z0[3],
                                          steering_uncertainty_factor=1.0, lr_uncertainty_factor=1.0,
                                          WB_uncertainty_factor=1.0)
-        # node = Node(x=z0[0], y=z0[1], v=z0[2], yaw=z0[3])
-
+        car_model.simulation_params["dt"] = self.MPC_params.dt
         for ai, di, i in zip(self.a_old, self.delta_old, range(1, self.MPC_params.T + 1)):
             car_model.update(ai, di)
             z_bar[0, i] = car_model.x
@@ -616,6 +618,10 @@ class MPC:
 
         cost = 0.0
         actuation_cost = 0.0
+        a_cost = 0.0
+        a_change_cost = 0.0
+        delta_cost = 0.0
+        delta_change_cost = 0.0
         x_cost = 0.0
         y_cost = 0.0
         psi_cost = 0.0
@@ -628,12 +634,14 @@ class MPC:
         for t in range(P.T):
             cost += cvxpy.quad_form(u[:, t], P.R)
             actuation_cost += cvxpy.quad_form(u[:, t], P.R)
+            a_cost += (u[0, t] ** 2) * P.R[0,0]
+            delta_cost += (u[1, t] ** 2) * P.R[1, 1]
             cost += cvxpy.quad_form(z_ref[:, t] - z[:, t], P.Q)
             state_error_cost += cvxpy.quad_form(z_ref[:, t] - z[:, t], P.Q)
-            x_cost += cvxpy.abs(z_ref[0, t] - z[0, t]) * P.Q[0, 0]
-            y_cost += cvxpy.abs(z_ref[1, t] - z[1, t]) * P.Q[1, 1]
-            v_cost += cvxpy.abs(z_ref[2, t] - z[2, t]) * P.Q[2, 2]
-            psi_cost += cvxpy.abs(z_ref[3, t] - z[3, t]) * P.Q[3, 3]
+            x_cost += ((z_ref[0, t] - z[0, t]) ** 2) * P.Q[0, 0]
+            y_cost += ((z_ref[1, t] - z[1, t]) ** 2) * P.Q[1, 1]
+            v_cost += ((z_ref[2, t] - z[2, t]) ** 2) * P.Q[2, 2]
+            psi_cost += ((z_ref[3, t] - z[3, t]) ** 2) * P.Q[3, 3]
 
             A, B, C = MPC.calc_linear_discrete_model(z_bar[2, t], z_bar[3, t], d_bar[t], P)
 
@@ -642,6 +650,8 @@ class MPC:
             if t < P.T - 1:
                 cost += cvxpy.quad_form(u[:, t + 1] - u[:, t], P.Rd)
                 actuation_change_cost += cvxpy.quad_form(u[:, t + 1] - u[:, t], P.Rd)
+                a_change_cost += ((u[0, t + 1] - u[0, t]) ** 2) *  P.Rd[0, 0]
+                delta_change_cost += ((u[1, t + 1] - u[1, t]) ** 2) * P.Rd[1, 1]
                 constrains += [cvxpy.abs(u[1, t + 1] - u[1, t]) <= P.steer_change_max * P.dt]
 
         cost += cvxpy.quad_form(z_ref[:, P.T] - z[:, P.T], P.Qf)
@@ -670,9 +680,13 @@ class MPC:
             print("Cannot solve linear mpc!")
         cost_dict = {"overall_cost": cost.value,
                      "actuation_cost":actuation_cost.value,
+                     "a_cost": a_cost.value,
+                     "delta_cost": delta_cost.value,
                      "state_error_cost":state_error_cost.value,
                      "end_state_cost":end_state_cost.value,
                      "actuation_change_cost":actuation_change_cost.value,
+                     "a_change_cost": a_change_cost.value,
+                     "delta_change_cost": delta_change_cost.value,
                      "x_cost": x_cost.value,
                      "y_cost": y_cost.value,
                      "v_cost": v_cost.value,

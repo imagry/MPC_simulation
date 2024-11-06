@@ -180,8 +180,8 @@ def calc_desired_path(scenario, ds=0.1, traj_noise=None, plot_results=False):
         traj_samples_y = np.hstack([traj_samples_y, SF * np.arange(0, l2, dl)])
         traj_spline_x, traj_spline_y, traj_spline_psi, traj_spline_cur, _ = cs.calc_spline_course(traj_samples_x, traj_samples_y, ds=ds)
     elif scenario == 'random_curvature':
-        s = np.arange(0, 5000, 0.1)
-        k = 2.0 * (np.random.rand(s.shape[0])-0.5)#.cumsum()
+        s = np.arange(0, 500, ds)
+        k = 1.0 * (np.random.rand(s.shape[0])-0.5)#.cumsum()
         traj_spline_x, traj_spline_y = calculate_curve_from_curvature(s, k, plot_res=False)
         dx = np.diff(traj_spline_x)
         dy = np.diff(traj_spline_y)

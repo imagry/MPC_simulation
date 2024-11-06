@@ -9,10 +9,10 @@ import Functions
 import json
 import CurvesGenerator.cubic_spline as cs
 from tqdm import tqdm
-
+from copy import copy, deepcopy
 with open('vehicle_config.json', "r") as f:
     vehicle_params = json.loads(f.read())
-simulation_params = {'dt': 0.01, 't_end': 50, 'ego_frame_placement': 'front_axle', 'velocity_KPH': 25,
+simulation_params = {'dt': 0.05, 't_end': 50, 'ego_frame_placement': 'front_axle', 'velocity_KPH': 25,
                      'path_spacing': 1.0,
                      'model': 'Kinematic', #'Kinematic', 'Dynamic'
                      'animate': True, 'plot_results': True, 'save_results': False}
@@ -31,10 +31,10 @@ if simulation_params['model'] == 'Dynamic':
                                       m_uncertainty_factor=1.0, I_uncertainty_factor=1.0, C_uncertainty_factor=1.0)
 elif simulation_params['model'] == 'Kinematic':
     vehicle_obj = VehicleKinemaicModel(x=traj_spline_x[0] + error_x, y=traj_spline_y[0] + error_y, psi=traj_spline_psi[0],
-                                       vehicle_params=vehicle_params, simulation_params=simulation_params,
+                                       vehicle_params=copy(vehicle_params), simulation_params=copy(simulation_params),
                                        steering_uncertainty_factor=1.0, lr_uncertainty_factor=1.0, WB_uncertainty_factor=1.0)
 t = np.arange(0, simulation_params['t_end'], simulation_params['dt'])
-# vehicle_obj.vx = simulation_params['velocity_KPH'] / 3.6
+vehicle_obj.vx = simulation_params['velocity_KPH'] / 3.6
 # variable to keep
 x = []
 y = []
@@ -62,7 +62,7 @@ Ks = 1.0
 SC = StanleyController(Ks=Ks, desired_traj_x=traj_spline_x, desired_traj_y=traj_spline_y, desired_traj_psi=traj_spline_psi)
 ref_path_point = np.vstack([traj_spline_x, traj_spline_y]).T
 speed_profile = simulation_params['velocity_KPH'] * np.ones(len(traj_spline_psi)) / 3.6
-MPC_obj = MPC(vehicle_params, simulation_params, ref_path_points=ref_path_point, ref_path_heading=traj_spline_psi,
+MPC_obj = MPC(copy(vehicle_params), copy(simulation_params), ref_path_points=ref_path_point, ref_path_heading=traj_spline_psi,
               speed_profile=speed_profile)
 stop_condition = False
 i = 0
@@ -97,7 +97,8 @@ while not stop_condition:
     ti = t[i]
     t_acumulated.append(ti)
     SC.calc_steering_command(vehicle_obj)
-    MPC_obj.calc_steering_command(vehicle_obj.clone())
+    temp_vehicle = vehicle_obj.clone()
+    MPC_obj.calc_steering_command(temp_vehicle)
     vehicle_obj.update(a=MPC_obj.a_exc, delta=MPC_obj.delta_exc)
     # store values
     x.append(vehicle_obj.x)
