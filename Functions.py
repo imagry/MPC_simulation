@@ -172,7 +172,7 @@ def calc_desired_path(scenario, ds=0.1, traj_noise=None, plot_results=False):
         else:
             SF = 1.0
         l1 = 10.0
-        l2 = 20.0
+        l2 = 30.0
         dl = 0.5
         traj_samples_x = np.arange(0, l1, dl)
         traj_samples_y = np.zeros([traj_samples_x.shape[0]])

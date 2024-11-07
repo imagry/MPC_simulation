@@ -334,11 +334,11 @@ class MPC_params:
     # System config
     NX = 4  # state vector: z = [x, y, v, phi]
     NU = 2  # input vector: u = [acceleration, steer]
-    T = 5  # finite time horizon length
+    T = 25  # finite time horizon length
 
     # MPC config
     Q = np.diag([1.0, 1.0, 1.0, 1.0])  # penalty for states
-    Qf = np.diag([1.0, 1.0, 1.0, 1.0]) * 0.1 # penalty for end state
+    Qf = np.diag([1.0, 1.0, 1.0, 1.0])  # penalty for end state
     R = np.diag([0.01, 0.1])  # penalty for inputs
     Rd = np.diag([0.1, 1.0])  # penalty for change of inputs
 

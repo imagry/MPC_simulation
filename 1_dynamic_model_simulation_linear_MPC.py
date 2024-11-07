@@ -12,17 +12,17 @@ from tqdm import tqdm
 from copy import copy, deepcopy
 with open('vehicle_config.json', "r") as f:
     vehicle_params = json.loads(f.read())
-simulation_params = {'dt': 0.05, 't_end': 50, 'ego_frame_placement': 'front_axle', 'velocity_KPH': 25,
-                     'path_spacing': 1.0,
+simulation_params = {'dt': 0.1, 't_end': 50, 'ego_frame_placement': 'front_axle', 'velocity_KPH': 25,
+                     'path_spacing': 0.1,
                      'model': 'Kinematic', #'Kinematic', 'Dynamic'
                      'animate': True, 'plot_results': True, 'save_results': False}
 # generate path
 traj_samples_x = np.arange(0, 50, 0.5)
-scenario = 'random_curvature' # 'sin', 'straight_line', 'square', shiba, random_curvature,turn, original_from_repo
+scenario = 'random_curvature' # 'sin', 'straight_line', 'square', shiba, random_curvature,turn, original_from_repo, eight, ellipse
 traj_spline_x, traj_spline_y, traj_spline_psi, _, s = Functions.calc_desired_path(scenario, ds=simulation_params['path_spacing'])
 traj_length = s[-1]
 # create vehicle agent
-error_x = 0.0
+error_x = -1.0
 error_y = 0.0
 if simulation_params['model'] == 'Dynamic':
     vehicle_obj = VehicleDynamicModel(x=traj_spline_x[0] + error_x, y=traj_spline_y[0] + error_y, psi=traj_spline_psi[0],
@@ -79,13 +79,13 @@ if simulation_params['animate']:
     vehicle_animation_axis.grid(True)
     vehicle_animation_axis.set_xlabel('x [m]')
     vehicle_animation_axis.set_ylabel('y [m]')
-    lateral_error_axis = plt.subplot(3, 2, 2)
+    h = lateral_error_axis = plt.subplot(3, 2, 2)
     lateral_error_axis.grid(True)
     lateral_error_axis.set_ylabel('lateral error [m]')
-    velocity_axis = plt.subplot(3, 2, 4)
+    velocity_axis = plt.subplot(3, 2, 4, sharex=h)
     velocity_axis.grid(True)
     velocity_axis.set_ylabel('velocity [m/sec]')
-    MPC_cost_axis = plt.subplot(3, 2, 6)
+    MPC_cost_axis = plt.subplot(3, 2, 6, sharex=h)
     MPC_cost_axis.grid(True)
     MPC_cost_axis.set_ylabel('MPC cost [unitless]')
 
@@ -144,6 +144,7 @@ while not stop_condition:
         vehicle_animation_axis.grid(True)
         lateral_error_axis.clear()
         lateral_error_axis.plot(t_acumulated, ef)
+        lateral_error_axis.set_xlim(max(ti-1,0),ti+0.1)
         lateral_error_axis.grid(True)
         velocity_axis.clear()
         velocity_axis.plot(t_acumulated, velocity)
@@ -168,6 +169,7 @@ while not stop_condition:
         velocity_axis.set_ylabel('velocity [m/sec]')
         velocity_axis.set_xlabel('t [sec]')
         MPC_cost_axis.set_ylabel('MPC cost [unitless]')
+        MPC_cost_axis.set_ylim(-0.1, MPC_obj.cost_dict["overall_cost"] *1.1)
         plt.gcf().canvas.mpl_connect('key_release_event',
                                      lambda event:
                                      [exit(0) if event.key == 'escape' else None])
