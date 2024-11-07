@@ -89,7 +89,7 @@ if simulation_params['animate']:
     MPC_cost_axis.grid(True)
     MPC_cost_axis.set_ylabel('MPC cost [unitless]')
 
-animation_dt = 0.1
+animation_dt = 0.05
 ndt = int(animation_dt/simulation_params['dt'])
 pbar = tqdm(total=len(t))
 s = 0
@@ -132,7 +132,7 @@ while not stop_condition:
     if np.mod(i, ndt) == 0 and simulation_params['animate']:
         plt.cla()
         vehicle_animation_axis.clear()
-        vehicle_animation_axis.set_title('t = ' + str(ti) + ' [sec]')
+        vehicle_animation_axis.set_title('t = ' + str("%.2f" % ti) + ' [sec]')
         vehicle_animation_axis.plot(traj_spline_x, traj_spline_y, color='gray', linewidth=2.0)
         # vehicle_traj_line.remove()
         vehicle_traj_line = vehicle_animation_axis.plot(x, y, linewidth=2.0, color='darkviolet')

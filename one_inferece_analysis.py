@@ -22,7 +22,7 @@ vehicle_obj = VehicleKinemaicModel(x=traj_spline_x[0] + error_x, y=traj_spline_y
                                    vehicle_params=copy(vehicle_params), simulation_params=copy(simulation_params),
                                    steering_uncertainty_factor=1.0, lr_uncertainty_factor=1.0, WB_uncertainty_factor=1.0)
 t = np.arange(0, simulation_params['t_end'], simulation_params['dt'])
-vehicle_obj.vx = simulation_params['velocity_KPH'] / 3.6 * 0
+vehicle_obj.vx = simulation_params['velocity_KPH'] / 3.6
 # stanly gain
 Ks = 1.0
 SC = StanleyController(Ks=Ks, desired_traj_x=traj_spline_x, desired_traj_y=traj_spline_y, desired_traj_psi=traj_spline_psi)
@@ -39,10 +39,40 @@ x_ref = z_ref[0, :]
 y_ref = z_ref[1, :]
 v_ref = z_ref[2, :]
 psi_ref = z_ref[3, :]
-# vehicle_obj.update(a=MPC_obj.a_exc, delta=MPC_obj.delta_exc)
+if False:
+    # check linearization
+    psi0 = 0.0
+    x0 = 0
+    y0 = 1
+    v0 = 10
+    # z_k = np.array([vehicle_obj.x, vehicle_obj.y, vehicle_obj.vx, vehicle_obj.psi])
+    z_k = np.array([x0, y0, v0, psi0])
+    dt = 0.1
+    a = 0.25
+    delta = 0.4
+    MPC_obj.MPC_params.dt = dt
+    A, B, C = MPC.calc_linear_discrete_model(z_k[2], z_k[3], MPC_obj.delta_exc, MPC_obj.MPC_params)
+    Aorg, Borg, Corg = MPC.calc_linear_discrete_model_org(z_k[2], z_k[3], MPC_obj.delta_exc, MPC_obj.MPC_params)
+    # u = np.array([MPC_obj.a_exc, MPC_obj.delta_exc])
+    u = [a, delta]
+    z_kp1_lin = A @ z_k + B @ u + C
+    z_kp1_lin_org = Aorg @ z_k + Borg @ u + Corg
+    print("z_kp1_lin = " + str(z_kp1_lin))
+    print("z_kp1_lin_org = " + str(z_kp1_lin_org))
+    vehicle_obj.x = z_k[0]
+    vehicle_obj.y = z_k[1]
+    vehicle_obj.vx = z_k[2]
+    vehicle_obj.psi = z_k[3]
+    vehicle_obj.simulation_params["dt"] = dt
+    # vehicle_obj.update(a=MPC_obj.a_exc, delta=MPC_obj.delta_exc)
+    vehicle_obj.update(a=a, delta=delta)
+    z_kp1 = np.array([vehicle_obj.x, vehicle_obj.y, vehicle_obj.vx, vehicle_obj.psi])
+    dz = z_kp1 - z_k
+    print("z_kp1 = " + str(z_kp1))
 
 
 
+# exit()
 animation_figure = plt.figure()
 vehicle_animation_axis = plt.subplot(1, 1, 1)
 ref_traj_line = vehicle_animation_axis.plot(traj_spline_x, traj_spline_y, color='gray', linewidth=2.0)
@@ -52,8 +82,8 @@ vehicle_animation_axis.grid(True)
 vehicle_animation_axis.set_xlabel('x [m]')
 vehicle_animation_axis.set_ylabel('y [m]')
 vehicle_animation_axis.scatter(MPC_obj.x_opt, MPC_obj.y_opt, s=10)
-vehicle_animation_axis.set_xlim(vehicle_obj.x - 25, vehicle_obj.x + 25)
-vehicle_animation_axis.set_ylim(vehicle_obj.y - 25, vehicle_obj.y + 25)
+# vehicle_animation_axis.set_xlim(vehicle_obj.x - 25, vehicle_obj.x + 25)
+# vehicle_animation_axis.set_ylim(vehicle_obj.y - 25, vehicle_obj.y + 25)
 vehicle_animation_axis.grid(True)
 
 plt.figure('state')

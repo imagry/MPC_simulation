@@ -334,7 +334,7 @@ class MPC_params:
     # System config
     NX = 4  # state vector: z = [x, y, v, phi]
     NU = 2  # input vector: u = [acceleration, steer]
-    T = 10  # finite time horizon length
+    T = 5  # finite time horizon length
 
     # MPC config
     Q = np.diag([1.0, 1.0, 1.0, 1.0])  # penalty for states
@@ -350,8 +350,8 @@ class MPC_params:
     N_IND = 10  # search index number
     dt = 0.1  # time step
     d_dist = 1.0  # dist step
-    d_a_res = 0.001  # threshold for stopping iteration
-    d_delta_res = 0.001  # threshold for stopping iteration
+    d_a_res = 0.01  # threshold for stopping iteration
+    d_delta_res = 0.01  # threshold for stopping iteration
 
     # vehicle config
     RF = 3.3  # [m] distance from rear to vehicle front end of vehicle
@@ -578,6 +578,32 @@ class MPC:
         return z_bar
     @staticmethod
     def calc_linear_discrete_model(v, phi, delta, P):
+        """
+        calc linear and discrete time dynamic model.
+        :param v: speed: v_bar
+        :param phi: angle of vehicle: phi_bar
+        :param delta: steering angle: delta_bar
+        :return: A, B, C
+        """
+
+        A = np.array([[1.0, 0.0, P.dt * math.cos(phi + delta) , - P.dt * v * math.sin(phi + delta)],
+                      [0.0, 1.0, P.dt * math.sin(phi + delta) ,   P.dt * v * math.cos(phi + delta)],
+                      [0.0, 0.0, 1.0                          , 0.0                               ],
+                      [0.0, 0.0, P.dt * math.sin(delta) / P.WB,1.0                               ]])
+
+        B = np.array([[0.0 , - P.dt * v * math.sin(phi + delta)],
+                      [0.0 ,   P.dt * v * math.cos(phi + delta)],
+                      [P.dt, 0.0                               ],
+                      [0.0 , P.dt * v  * math.cos(delta) / P.WB]])
+
+        C = np.array([P.dt * v * math.sin(phi + delta) * (phi + delta),
+                      - P.dt * v * math.cos(phi + delta) * (phi + delta),
+                      0.0,
+                      -P.dt * v * delta * math.cos(delta) / P.WB])
+
+        return A, B, C
+    @staticmethod
+    def calc_linear_discrete_model_org(v, phi, delta, P):
         """
         calc linear and discrete time dynamic model.
         :param v: speed: v_bar
