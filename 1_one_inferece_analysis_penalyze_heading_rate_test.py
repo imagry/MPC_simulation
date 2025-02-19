@@ -259,12 +259,15 @@ class MPC:
         end_state_cost = 0.0
         actuation_change_cost = 0.0
         constrains = []
-
+        R_mod = np.diag([1, z0[2]**2])  # penalty modification due to state
+        Rd_mod = np.diag([1, z0[2]**2])  # penalty modification due to state for change of inputs
+        R = P.R @ R_mod
+        Rd = P.Rd @ Rd_mod
         for t in range(P.T):
-            cost += cvxpy.quad_form(u[:, t], P.R)
-            actuation_cost += cvxpy.quad_form(u[:, t], P.R)
-            a_cost += (u[0, t] ** 2) * P.R[0,0]
-            delta_cost += (u[1, t] ** 2) * P.R[1, 1]
+            cost += cvxpy.quad_form(u[:, t], R)
+            actuation_cost += cvxpy.quad_form(u[:, t], R)
+            a_cost += (u[0, t] ** 2) * R[0,0]
+            delta_cost += (u[1, t] ** 2) * R[1, 1]
             cost += cvxpy.quad_form(z_ref[:, t] - z[:, t], P.Q)
             state_error_cost += cvxpy.quad_form(z_ref[:, t] - z[:, t], P.Q)
             x_cost += ((z_ref[0, t] - z[0, t]) ** 2) * P.Q[0, 0]
@@ -277,10 +280,10 @@ class MPC:
             constrains += [z[:, t + 1] == A @ z[:, t] + B @ u[:, t] + C]
 
             if t < P.T - 1: # horizon length
-                cost += cvxpy.quad_form(u[:, t + 1] - u[:, t], P.Rd)
-                actuation_change_cost += cvxpy.quad_form(u[:, t + 1] - u[:, t], P.Rd)
-                a_change_cost += ((u[0, t + 1] - u[0, t]) ** 2) *  P.Rd[0, 0]
-                delta_change_cost += ((u[1, t + 1] - u[1, t]) ** 2) * P.Rd[1, 1]
+                cost += cvxpy.quad_form(u[:, t + 1] - u[:, t], Rd)
+                actuation_change_cost += cvxpy.quad_form(u[:, t + 1] - u[:, t], Rd)
+                a_change_cost += ((u[0, t + 1] - u[0, t]) ** 2) *  Rd[0, 0]
+                delta_change_cost += ((u[1, t + 1] - u[1, t]) ** 2) * Rd[1, 1]
                 constrains += [cvxpy.abs(u[1, t + 1] - u[1, t]) <= P.steer_change_max * P.dt]
 
         cost += cvxpy.quad_form(z_ref[:, P.T] - z[:, P.T], P.Qf)

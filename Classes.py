@@ -37,6 +37,7 @@ class VehicleKinemaicModel:
             beta = np.arctan(self.lr * np.tan(delta)/ self.WB)
             self.x += self.vx * np.cos(self.psi + beta) * self.simulation_params['dt']
             self.y += self.vx * np.sin(self.psi + beta) * self.simulation_params['dt']
+            self.psi_dot = self.vx * np.cos(beta) / self.WB * np.tan(delta)
             self.psi += self.vx * np.cos(beta) / self.WB * np.tan(delta) * self.simulation_params['dt']
         elif self.simulation_params['ego_frame_placement'] == 'front_axle':
             # delta = self.limit_input(delta)
@@ -47,6 +48,7 @@ class VehicleKinemaicModel:
             self.x += self.vx * np.cos(self.psi + delta) * self.simulation_params['dt']
             self.y += self.vx * np.sin(self.psi + delta) * self.simulation_params['dt']
             self.psi += self.vx * np.sin(delta) / self.WB * self.simulation_params['dt']
+            self.psi_dot = self.vx * np.sin(delta) / self.WB
             # self.x += self.vx * np.cos(self.psi) * self.simulation_params['dt']
             # self.y += self.vx * np.sin(self.psi) * self.simulation_params['dt']
             # self.psi += self.vx / self.WB * np.tan(delta) * self.simulation_params['dt']
@@ -56,6 +58,7 @@ class VehicleKinemaicModel:
             self.y += self.vx * np.sin(self.psi) * self.simulation_params['dt']
             # self.psi += self.vx / self.WB * np.tan(delta) * self.WB ##this looks wrong check eq
             self.psi += self.vx * np.sin(delta) / self.WB * self.simulation_params['dt']
+            self.psi_dot = self.vx * np.sin(delta) / self.WB
         else:
             raise 'invalid ego frame placement'
         self.vx += a * self.simulation_params['dt']
@@ -339,7 +342,7 @@ class MPC_params:
     # MPC config
     Q = np.diag([1.0, 1.0, 1.0, 1.0])  # penalty for states
     Qf = np.diag([1.0, 1.0, 1.0, 1.0])  # penalty for end state
-    R = np.diag([0.01, 0.1])  # penalty for inputs
+    R = np.diag([0.01, 1.0])  # penalty for inputs acc and steer
     Rd = np.diag([0.1, 1.0])  # penalty for change of inputs
 
     dist_stop = 1.5  # stop permitted when dist to goal < dist_stop
@@ -451,7 +454,6 @@ class MPC:
         self.MPC_params.steer_max = vehicle_params['MAX_STEER']# in radians
         self.MPC_params.d_dist = simulation_params["path_spacing"]
         self.ref_path_points = ref_path_points
-        self.ref_path_heading = ref_path_heading
         self.ref_path_heading = ref_path_heading
         self.speed_profile = speed_profile
         self.delta_old = [0.0] * self.MPC_params.T
@@ -673,7 +675,7 @@ class MPC:
 
             constrains += [z[:, t + 1] == A @ z[:, t] + B @ u[:, t] + C]
 
-            if t < P.T - 1:
+            if t < P.T - 1: # horizon length
                 cost += cvxpy.quad_form(u[:, t + 1] - u[:, t], P.Rd)
                 actuation_change_cost += cvxpy.quad_form(u[:, t + 1] - u[:, t], P.Rd)
                 a_change_cost += ((u[0, t + 1] - u[0, t]) ** 2) *  P.Rd[0, 0]

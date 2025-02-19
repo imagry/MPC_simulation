@@ -149,7 +149,7 @@ def calc_desired_path(scenario, ds=0.1, traj_noise=None, plot_results=False):
         ay = [0.0, 40.0, 15.0, 30.0, 0.0]
         traj_spline_x, traj_spline_y, traj_spline_psi, traj_spline_cur, _ = cs.calc_spline_course(ax, ay, ds=ds)
     elif scenario == 'straight_line':
-        x_range = 25.0
+        x_range = 50.0
         initial_error = 1.0
         traj_samples_x = np.arange(0, x_range, 0.5)
         traj_samples_y = initial_error * np.ones(traj_samples_x.shape)
