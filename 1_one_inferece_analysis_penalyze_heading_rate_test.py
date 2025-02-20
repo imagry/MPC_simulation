@@ -14,10 +14,10 @@ class MPC_params:
     T = 25  # finite time horizon length
 
     # MPC config
-    Q = np.diag([1.0, 1.0, 1.0, 1.0])  # penalty for states
-    Qf = np.diag([1.0, 1.0, 1.0, 1.0])  # penalty for end state
-    R = np.diag([0.01, 1.0])  # penalty for inputs acc and steer
-    Rd = np.diag([0.1, 1.0])  # penalty for change of inputs
+    Q = np.diag([0.1, 1.0, 1.0, 100.0])  # penalty for states
+    Qf = np.diag([0.1, 1.0, 0.1, 100.0])  # penalty for end state
+    R = np.diag([0.01, 10.0])  # penalty for inputs acc and steer
+    Rd = np.diag([0.1, 10.0])  # penalty for change of inputs
 
     dist_stop = 1.5  # stop permitted when dist to goal < dist_stop
     speed_stop = 0.5 / 3.6  # stop permitted when speed < speed_stop
@@ -41,9 +41,10 @@ class MPC_params:
 
     steer_max = np.deg2rad(45.0)  # max steering angle [rad]
     steer_change_max = np.deg2rad(30.0)  # maximum steering speed [rad/s]
-    speed_max = 55.0 / 3.6  # maximum speed [m/s]
+    speed_max = 100.0 / 3.6  # maximum speed [m/s]
     speed_min = -20.0 / 3.6  # minimum speed [m/s]
     acceleration_max = 1.0  # maximum acceleration [m/s2]
+    min_velocity = 1
 class MPC:
     def __init__(self, vehicle_params, simulation_params, ref_path_points, ref_path_heading, speed_profile):
         # self.car_model = VehicleKinemaicModel(vehicle_params=vehicle_params, simulation_params=simulation_params,
@@ -259,8 +260,9 @@ class MPC:
         end_state_cost = 0.0
         actuation_change_cost = 0.0
         constrains = []
-        R_mod = np.diag([1, z0[2]**2])  # penalty modification due to state
-        Rd_mod = np.diag([1, z0[2]**2])  # penalty modification due to state for change of inputs
+        v0 = max(P.min_velocity, z0[2])
+        R_mod = np.diag([1, v0**2])  # penalty modification due to state
+        Rd_mod = np.diag([1, v0**2])  # penalty modification due to state for change of inputs
         R = P.R @ R_mod
         Rd = P.Rd @ Rd_mod
         for t in range(P.T):
@@ -488,7 +490,7 @@ class MPC:
 
 with open('vehicle_config.json', "r") as f:
     vehicle_params = json.loads(f.read())
-simulation_params = {'dt': 0.01, 't_end': 50, 'ego_frame_placement': 'front_axle', 'velocity_KPH': 10,
+simulation_params = {'dt': 0.01, 't_end': 50, 'ego_frame_placement': 'front_axle', 'velocity_KPH': 50,
                      'path_spacing': 1.0,
                      'model': 'Kinematic', #'Kinematic', 'Dynamic'
                      'animate': True, 'plot_results': True, 'save_results': False}
@@ -568,6 +570,7 @@ vehicle_animation_axis.scatter(MPC_obj.x_opt, MPC_obj.y_opt, s=10)
 
 
 plt.figure('state')
+# x
 plt.subplot(4,2,1)
 plt.plot(x_ref)
 plt.plot(MPC_obj.x_opt)
@@ -583,6 +586,7 @@ plt.title("state error cost component = " + str("%.2f" % MPC_obj.cost_dict["stat
 plt.annotate(txt, xy=(0.02, 0.01), xycoords='axes fraction',
              fontsize=9, ha='left', va='bottom',
              bbox=dict(facecolor='white', alpha=0.5))
+# y
 plt.subplot(4,2,3)
 plt.plot(y_ref)
 plt.plot(MPC_obj.y_opt)
@@ -596,6 +600,7 @@ txt = "y error cost component = " + str("%.2f" % MPC_obj.cost_dict["y_cost"])
 plt.annotate(txt, xy=(0.02, 0.01), xycoords='axes fraction',
              fontsize=9, ha='left', va='bottom',
              bbox=dict(facecolor='white', alpha=0.5))
+# v
 plt.subplot(4,2,5)
 plt.plot(v_ref)
 plt.plot(MPC_obj.v_opt)
@@ -609,6 +614,7 @@ txt = "v error cost component = " + str("%.2f" % MPC_obj.cost_dict["v_cost"])
 plt.annotate(txt, xy=(0.02, 0.01), xycoords='axes fraction',
              fontsize=9, ha='left', va='bottom',
              bbox=dict(facecolor='white', alpha=0.5))
+# psi
 plt.subplot(4,2,7)
 plt.plot(psi_ref)
 plt.plot(MPC_obj.yaw_opt)
@@ -636,7 +642,6 @@ plt.annotate(txt, xy=(0.02, 0.01), xycoords='axes fraction',
 txt = ("actuation cost component = " + str("%.2f" % MPC_obj.cost_dict["actuation_cost"]) + " \n" +
        "actuation change component = " + str("%.2f" % MPC_obj.cost_dict["actuation_change_cost"]))
 plt.title(txt)
-
 plt.grid(True)
 plt.subplot(212)
 plt.plot(MPC_obj.delta_opt)
